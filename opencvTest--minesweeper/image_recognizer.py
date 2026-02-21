@@ -3,10 +3,19 @@ import numpy as np
 import os
 import mss
 import time
-thresh_IoU=0.35
-threshold=0.58
-threshold_block=0.6
-thresh_IoU_block=0.1
+from typing import cast
+import read_config
+cfg = read_config.read_config()
+templates={}
+base_dir = os.path.dirname(os.path.abspath(__file__))
+template_folder = os.path.join(base_dir, cfg.get('templatePath.folder'))
+template_folder = cast(str, template_folder)#断言，无意义
+template_list=cfg.get('templatePath.files')
+for template in template_list:
+    template_path=os.path.join(template_folder,template['file'])
+    img = cv2.imread(template_path)
+    templates[template['name']]=img
+
 def preprogress_block(img):
     img_gray=cv2.cvtColor(img,cv2.COLOR_BGRA2GRAY)
     img_blur=cv2.GaussianBlur(img_gray,(3,3),0)
@@ -25,11 +34,11 @@ def match(template,processed_img,img):
     h = template.shape[0]
     result=cv2.matchTemplate(processed_img,template,cv2.TM_CCOEFF_NORMED)
 
-    loc=np.where(result>threshold)
+    loc=np.where(result>cfg.get("threshParam.thresh_numAndMine"))
     boxes=np.column_stack([loc[1],loc[0],loc[1]+w,loc[0]+h])
     scores=result[loc]
     max_boxes=[]
-    while(boxes.size>0):
+    while boxes.size>0:
         index = np.argmax(scores)
         max_boxes.append(boxes[index])
         scores = np.delete(scores, index)
@@ -37,7 +46,7 @@ def match(template,processed_img,img):
         indexs=[]
         for index,box in enumerate(boxes,start=0):
             iou=IoU(max_boxes[-1],box)
-            if iou > thresh_IoU:
+            if iou > cfg.get("threshParam.thresh_IoU_numAndMine"):
                 indexs.append(index)
         mask = np.ones(len(boxes), dtype=bool)
         mask[indexs] = False
@@ -61,25 +70,16 @@ def IoU(box1,box2):
     IoU=intersection/union
     return IoU
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-template_folder = os.path.join(base_dir, "temp")
-template_num1=cv2.imread(os.path.join(base_dir, "temp","num1.png"))
-template_num2=cv2.imread(os.path.join(base_dir, "temp","num2.png"))
-template_num3=cv2.imread(os.path.join(base_dir, "temp","num3.png"))
-template_num4=cv2.imread(os.path.join(base_dir, "temp","num4.png"))
-template_exploded_mine=cv2.imread(os.path.join(base_dir, "temp","exploded_mine.png"))
-template_block=cv2.imread(os.path.join(base_dir, "temp","block.png"))
-template_mine=cv2.imread(os.path.join(base_dir, "temp","mine.png"))
 
 
 with mss.mss() as sct:
-    monitor = {"top": 284, "left": 280, "width": 1910, "height": 1313}
+    monitor = {"top": 180, "left": 0, "width": 2510, "height": 1513}
     time.sleep(3)
     img=np.array(sct.grab(monitor))
     img_copy=img.copy()
     processed_img=preprogress(img_copy)
-    processed_template_num1=preprogress(template_num1)
-    result=match(processed_template_num1,processed_img,img)
+    processed_template_num2=preprogress(templates['num2'])
+    result=match(processed_template_num2,processed_img,img)
     cv2.imshow("a",result)
     cv2.waitKey(0)
     cv2.destroyAllWindows()

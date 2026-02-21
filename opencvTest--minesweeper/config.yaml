@@ -1,0 +1,30 @@
+threshParam:
+  thresh_block: 0.35
+  thresh_numAndMine: 0.8
+  thresh_lose: 0.4
+  thresh_IoU_block: 0.55
+  thresh_IoU_numAndMine: 0.35
+  thresh_IoU_lose: 0.35
+monitor:
+  top: 180
+  left: 0
+  width: 2510
+  height: 1513
+templatePath:
+    folder: "temp"
+    files:
+      - name: "block"
+        file: "block.png"
+      - name: "num1"
+        file: "num1.png"
+      - name: "num2"
+        file: "num2.png"
+      - name: "num3"
+        file: "num3.png"
+      - name: "num4"
+        file: "num4.png"
+      - name: "mine"
+        file: "mine.png"
+      - name: "lose"
+        file: "lose.png"
+
