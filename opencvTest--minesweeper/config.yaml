@@ -1,34 +1,39 @@
 threshParam:
   thresh_block: 0.5
-  thresh_opened_block: 0.95
-  thresh_numAndMine: 0.75
+  thresh_opened_block: 0.62
+  thresh_num: 0.75
   thresh_lose: 0.4
   thresh_IoU_block: 0.1
-  thresh_IoU_opened_block: 0.55
-  thresh_IoU_numAndMine: 0.35
+  thresh_IoU_opened_block: 0.45
+  thresh_IoU_num: 0.35
   thresh_IoU_lose: 0.35
 monitor:
-  top: 180
-  left: 0
-  width: 2510
-  height: 1513
+  top: 464
+  left: 981
+  width: 520
+  height: 520
 templatePath:
     folder: "temp"
     files:
-      - name: "block"
+      - type: "block"
         file: "block.png"
-      - name: "opened_block"
+        value: -1
+      - type: "opened_block"
         file: "opened_block.png"
-      - name: "num1"
+        value: 0
+      - type: "num1"
         file: "num1.png"
-      - name: "num2"
+        value: 1
+      - type: "num2"
         file: "num2.png"
-      - name: "num3"
+        value: 2
+      - type: "num3"
         file: "num3.png"
-      - name: "num4"
+        value: 3
+      - type: "num4"
         file: "num4.png"
-      - name: "mine"
-        file: "mine.png"
-      - name: "lose"
+        value: 4
+      - type: "lose"
         file: "lose.png"
+        value: 999
 

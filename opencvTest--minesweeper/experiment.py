@@ -16,7 +16,7 @@ def get_path():
     for template in template_list:
         template_path = os.path.join(template_folder, template['file'])
         img = cv2.imread(template_path)
-        templates[template['name']] = img
+        templates[template['type']] = img
     return templates
 class ImagePreprocessor:
     def __init__(self,big_img,type):
@@ -38,10 +38,14 @@ class ImagePreprocessor:
         img_blur = cv2.GaussianBlur(img_normalized, (3, 3), 0)
         return img_blur
     def preprocess_numAndMine(self,img):
-        img_gray=cv2.cvtColor(img,cv2.COLOR_BGRA2GRAY)
-        img_blur=cv2.GaussianBlur(img_gray,(3,3),0)
-        ret,img_binary=cv2.threshold(img_blur,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        return img_binary
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+        img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
+        ret, img_binary = cv2.threshold(img_blur,0, 255,cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        img_clean = cv2.morphologyEx(img_binary, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        return img_clean
 
     def preprocess(self):#应传入:原图，模板与模板类型
         if self.type == "block":
@@ -65,15 +69,18 @@ class Deal:
     def match(self):
         w = self.template.shape[1]
         h = self.template.shape[0]
-        result=cv2.matchTemplate(self.img,self.template,cv2.TM_CCOEFF_NORMED)
+
         if self.type in ["num1", "num2", "num3", "num4", "mine"]:
-            current_type = "numAndMine"
+            current_type = "num"
         else:
             current_type = self.type
+
         score_thresh = cfg.get(f"threshParam.thresh_{current_type}")
         iou_thresh = cfg.get(f"threshParam.thresh_IoU_{current_type}")
-        loc=np.where(result>score_thresh)
-        boxes=np.column_stack([loc[1],loc[0],loc[1]+w,loc[0]+h])
+
+        result=cv2.matchTemplate(self.img,self.template,cv2.TM_CCOEFF_NORMED)
+        loc = np.where(result > score_thresh)
+        boxes = np.column_stack([loc[1],loc[0],loc[1]+w,loc[0]+h])
         scores=result[loc]
 
         boxes_nms = boxes.copy()
@@ -118,6 +125,7 @@ class Deal:
             return np.array([])
         index = np.lexsort((position[:, 0], position[:, 1]))
         sorted_position = position[index]
+        print(sorted_position)
         return sorted_position
 class State:
     def __init__(self,positions):
@@ -163,12 +171,12 @@ with mss.mss() as sct:
     monitor = {"top": cfg.get('monitor.top'), "left": cfg.get('monitor.left'), "width": cfg.get('monitor.width'), "height": cfg.get('monitor.height')}
     time.sleep(3)
     img=np.array(sct.grab(monitor))
-    image_preprocessor=ImagePreprocessor(img,"num1")
+    image_preprocessor=ImagePreprocessor(img,"num3")
     deal=Deal(image_preprocessor,img)
     positions=deal.get_position()
-    '''
+
     state=State(positions)
     new_matrix=state.state_init()
-    print(new_matrix)'''
+    print(new_matrix)
 
 
