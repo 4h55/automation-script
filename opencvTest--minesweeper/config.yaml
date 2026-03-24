@@ -1,17 +1,17 @@
 threshParam:
   thresh_block: 0.5
-  thresh_opened_block: 0.62
-  thresh_num: 0.75
+  thresh_opened_block: 0.606
+  thresh_num: 0.78
   thresh_lose: 0.4
-  thresh_IoU_block: 0.1
-  thresh_IoU_opened_block: 0.45
+  thresh_IoU_block: 0.3
+  thresh_IoU_opened_block: 0.2
   thresh_IoU_num: 0.35
   thresh_IoU_lose: 0.35
 monitor:
   top: 464
-  left: 981
-  width: 520
-  height: 520
+  left: 1622
+  width: 511
+  height: 511
 templatePath:
     folder: "temp"
     files:

@@ -6,8 +6,7 @@ import time
 from typing import cast
 import read_config
 import pyautogui
-from loguru import logger
-from log import init_loguru
+
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0.1
 cfg = read_config.read_config()
@@ -20,7 +19,7 @@ def get_path():
     template_list = cfg.get('templatePath.files')
     for template in template_list:
         template_path = os.path.join(template_folder, template['file'])
-        img = cv2.imread(template_path)
+        img = cv2.imread(template_path,cv2.IMREAD_UNCHANGED)
         templates[template['type']] = img
     return templates
 templates=get_path()
@@ -36,19 +35,19 @@ class ImagePreprocessor:
         return edges
     def preprocess_opened_block(self,img):
         img_gray=cv2.cvtColor(img,cv2.COLOR_BGRA2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        img_enhanced = clahe.apply(img_gray)
-        img_normalized = cv2.normalize(img_enhanced, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        img_blur = cv2.GaussianBlur(img_normalized, (3, 3), 0)
-        return img_blur
+        img_blur = cv2.GaussianBlur(img_gray, (7, 7), 0)
+        img_normalized = cv2.normalize(img_blur, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        return img_normalized
 
     def preprocess_num(self, img, type):
+        # 先转HSV颜色空间，按色相精准筛选颜色
         if img.shape[-1] == 4:
             img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         else:
             img_bgr = img.copy()
         img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
+        # ✅ 扫雷数字的HSV颜色范围（精准到色相，彻底过滤其他颜色）
         color_range = {
             "num1": [np.array([100, 120, 70]), np.array([130, 255, 255])],  # 蓝色1
             "num2": [np.array([40, 120, 70]), np.array([77, 255, 255])],  # 绿色2
@@ -56,13 +55,15 @@ class ImagePreprocessor:
             "num4": [np.array([100, 120, 70]), np.array([130, 255, 255])],  # 深蓝色4
         }
 
+        # 按类型生成颜色掩码，只保留目标颜色的数字
         if type in color_range:
             lower, upper = color_range[type]
             mask = cv2.inRange(img_hsv, lower, upper)
         else:
+            # lose等其他类型用灰度
             mask = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
 
-
+        # 后续处理和你的原逻辑完全对齐，保证模板匹配一致
         img_blur = cv2.GaussianBlur(mask, (3, 3), 0)
         ret, img_binary = cv2.threshold(img_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
@@ -111,6 +112,8 @@ class Deal:
             if indices.size > 0:
                 indices = indices.ravel()
                 max_boxes = boxes[indices]
+
+
         if type == "opened_block" and max_boxes.size > 0:
             valid_boxes = []
             for box in max_boxes:
@@ -125,21 +128,14 @@ class Deal:
 
             max_boxes = np.array(valid_boxes)
 
+
+        for box in max_boxes:
+            cv2.rectangle(self.big_img,(box[0],box[1]),(box[2],box[3]),(0,0,255),2)
+        cv2.imshow("a", self.big_img)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         return np.array(max_boxes)
 
-    def IoU(self,box1,box2):
-        x1, y1, x2, y2 = box1
-        x3, y3, x4, y4 = box2
-        inter_x1 = max(x1, x3)
-        inter_y1 = max(y1, y3)
-        inter_x2 = min(x2, x4)
-        inter_y2 = min(y2, y4)
-        intersection = max(0, inter_x2 - inter_x1) *max(0, inter_y2 - inter_y1)
-        box_area1=(x2-x1)*(y2-y1)
-        box_area2=(x4-x3)*(y4-y3)
-        union=box_area1+box_area2-intersection
-        IoU=intersection/union
-        return IoU
 
     def get_position(self,img,template,type):
         boxes=self.match(img,template,type)
@@ -153,88 +149,6 @@ class Deal:
         index = np.lexsort((position[:, 0], position[:, 1]))
         sorted_position = position[index]
         return sorted_position
-class State:
-    def __init__(self):
-        self.grid=[]
-
-    def state_init(self):
-
-        hardcoded_x = [28, 85, 142, 199, 256, 313, 370, 427, 484]
-
-        hardcoded_y = [28, 85, 142, 199, 256, 313, 370, 427, 484]
-
-        num_rows = len(hardcoded_y)
-        num_cols = len(hardcoded_x)
-
-        new_matrix = np.zeros((num_rows + 1, num_cols + 1), dtype=object)
-        new_matrix[1:, 1:] = -1
-        new_matrix[1:, 0] = hardcoded_y
-        new_matrix[0, 1:] = hardcoded_x
-        new_matrix[0, 0] = 0
-
-        self.grid = new_matrix
-
-
-    def state_refresh(self,safe_block):
-        init_loguru()
-        act=Tool()
-        if safe_block :
-            for safe in safe_block.values():
-                x=safe[0]+cfg.get("monitor.left")
-                y=safe[1]+cfg.get("monitor.top")
-                act.click(x,y)
-                time.sleep(3)
-        #act.click(2045,887)
-        img=act.screenshot()
-        type_to_value = {
-            item['type']:item['value']
-            for item in cfg.get("templatePath.files")
-        }
-        preprocess = ImagePreprocessor(img)
-        deal=Deal(img)
-        x_list=self.grid[0,1:]
-        x_path={x:index for index,x in enumerate(x_list,start=1)}
-        y_list=self.grid[1:,0]
-        y_path={y:index for index,y in enumerate(y_list,start=1)}
-        max_loop=1
-        loop=0
-        processed_cells = set()
-        while self.grid[0,0]==0 and loop<max_loop :
-
-            for type,template in list(templates.items()):
-                if type in ["block", "lose"]:
-                    continue
-                value=type_to_value[type]
-                processed_img, processed_template=preprocess.preprocess(type)
-                positions=deal.get_position(processed_img, processed_template,type)
-                logger.info(type)
-                logger.info(positions)
-                for x, y in positions:
-                    col_idx = self._find_closest_key(x_path, int(x))
-                    row_idx = self._find_closest_key(y_path, int(y) )
-
-                    if col_idx is None or row_idx is None:
-                        logger.info(f"坐标 ({x},{y}) 未匹配到网格，跳过")
-                        continue
-                    cell_key = (row_idx, col_idx)
-                    if cell_key in processed_cells:
-                        continue
-
-                    processed_cells.add(cell_key)
-                    self.grid[row_idx, col_idx] = value
-                    logger.info(f"更新网格：({row_idx},{col_idx}) = {value}")
-
-            loop += 1
-
-        return self.grid
-
-    def _find_closest_key(self, mapping, target, threshold=28):
-        if not mapping:
-            return None
-        closest_key = min(mapping.keys(), key=lambda k: abs(k - target))
-        if abs(closest_key - target) <= threshold:
-            return mapping[closest_key]
-        return None
 class Tool:
 
     def click(self,x,y):
@@ -246,6 +160,27 @@ class Tool:
             time.sleep(3)
             img = np.array(sct.grab(monitor))
         return img
-
-
-
+if __name__ == "__main__":
+    tool=Tool()
+    img = tool.screenshot()
+    preprocess = ImagePreprocessor(img)
+    deal = Deal(img)
+    type=("num1"
+          ""
+          ""
+          ""
+          ""
+          ""
+          ""
+          ""
+          ""
+          ""
+          "")
+    processed_img, processed_template = preprocess.preprocess(type)
+    cv2.imshow(f"1. 预处理后的游戏截图 ({type})", processed_img)
+    cv2.imshow(f"2. 预处理后的模板 ({type})", processed_template)
+    print(f"模板尺寸: {processed_template.shape}, 截图预处理尺寸: {processed_img.shape}")
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    positions = deal.get_position(processed_img, processed_template, type)
+    print(positions)

@@ -4,9 +4,14 @@ import os
 import mss
 import time
 from typing import cast
-import pyautogui
 import read_config
+import pyautogui
+from loguru import logger
+from log import init_loguru
+pyautogui.FAILSAFE = True
+pyautogui.PAUSE = 0.1
 cfg = read_config.read_config()
+
 def get_path():
     templates = {}
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,11 +23,10 @@ def get_path():
         img = cv2.imread(template_path)
         templates[template['type']] = img
     return templates
+templates=get_path()
 class ImagePreprocessor:
-    def __init__(self,big_img,type):
+    def __init__(self,big_img):
         self.big_img = big_img
-        self.templates = get_path()
-        self.type = type
     def preprocess_block(self,img):
         img_gray=cv2.cvtColor(img,cv2.COLOR_BGRA2GRAY)
         img_blur=cv2.GaussianBlur(img_gray,(3,3),0)
@@ -37,50 +41,64 @@ class ImagePreprocessor:
         img_normalized = cv2.normalize(img_enhanced, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
         img_blur = cv2.GaussianBlur(img_normalized, (3, 3), 0)
         return img_blur
-    def preprocess_numAndMine(self,img):
-        img_gray = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
-        img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
-        ret, img_binary = cv2.threshold(img_blur,0, 255,cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
+    def preprocess_num(self, img, type):
+        if img.shape[-1] == 4:
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        else:
+            img_bgr = img.copy()
+        img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+
+        color_range = {
+            "num1": [np.array([100, 120, 70]), np.array([130, 255, 255])],  # 蓝色1
+            "num2": [np.array([40, 120, 70]), np.array([77, 255, 255])],  # 绿色2
+            "num3": [np.array([0, 120, 70]), np.array([10, 255, 255])],  # 红色3
+            "num4": [np.array([100, 120, 70]), np.array([130, 255, 255])],  # 深蓝色4
+        }
+
+        if type in color_range:
+            lower, upper = color_range[type]
+            mask = cv2.inRange(img_hsv, lower, upper)
+        else:
+            mask = cv2.cvtColor(img, cv2.COLOR_BGRA2GRAY)
+
+
+        img_blur = cv2.GaussianBlur(mask, (3, 3), 0)
+        ret, img_binary = cv2.threshold(img_blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
         img_clean = cv2.morphologyEx(img_binary, cv2.MORPH_OPEN, kernel, iterations=1)
 
         return img_clean
 
-    def preprocess(self):#应传入:原图，模板与模板类型
-        if self.type == "block":
+    def preprocess(self,type):
+        if type == "block":
             processed_img = self.preprocess_block(self.big_img)
-            processed_template = self.preprocess_block(self.templates[self.type])
-        elif self.type == "num1" or self.type == "num2" or self.type == "num3" or self.type == "num4" or self.type == "mine":
-            processed_img = self.preprocess_numAndMine(self.big_img)
-            processed_template = self.preprocess_numAndMine(self.templates[self.type])
-        elif self.type == "opened_block":
+            processed_template = self.preprocess_block(templates[type])
+        elif type == "num1" or type == "num2" or type == "num3" or type == "num4"or type == "lose" :
+            processed_img = self.preprocess_num(self.big_img,type)
+            processed_template = self.preprocess_num(templates[type],type)
+        elif type == "opened_block":
             processed_img = self.preprocess_opened_block(self.big_img)
-            processed_template = self.preprocess_opened_block(self.templates[self.type])
+            processed_template = self.preprocess_opened_block(templates[type])
         else:
             raise ValueError("there is no such type")
-        return processed_img, processed_template,self.type
+        return processed_img, processed_template
 #应传入:处理过的原图，模板与模板类型.最终返回模板位置
 class Deal:
-    def __init__(self,preprocess,big_img):
-        self.preprocess = preprocess
+    def __init__(self,big_img):
         self.big_img = big_img
-        self.img,self.template,self.type = preprocess.preprocess()
-    def match(self):
-        w = self.template.shape[1]
-        h = self.template.shape[0]
-
-        if self.type in ["num1", "num2", "num3", "num4", "mine"]:
+    def match(self,img,template,type):
+        w = template.shape[1]
+        h = template.shape[0]
+        result=cv2.matchTemplate(img,template,cv2.TM_CCOEFF_NORMED)
+        if type in ["num1", "num2", "num3", "num4"]:
             current_type = "num"
         else:
-            current_type = self.type
-
+            current_type = type
         score_thresh = cfg.get(f"threshParam.thresh_{current_type}")
         iou_thresh = cfg.get(f"threshParam.thresh_IoU_{current_type}")
-
-        result=cv2.matchTemplate(self.img,self.template,cv2.TM_CCOEFF_NORMED)
-        loc = np.where(result > score_thresh)
-        boxes = np.column_stack([loc[1],loc[0],loc[1]+w,loc[0]+h])
+        loc=np.where(result>score_thresh)
+        boxes=np.column_stack([loc[1],loc[0],loc[1]+w,loc[0]+h])
         scores=result[loc]
 
         boxes_nms = boxes.copy()
@@ -93,11 +111,25 @@ class Deal:
             if indices.size > 0:
                 indices = indices.ravel()
                 max_boxes = boxes[indices]
+        if type == "opened_block" and max_boxes.size > 0:
+            valid_boxes = []
+            for box in max_boxes:
+                x1, y1, x2, y2 = box.astype(int)
+                roi = img[y1:y2, x1:x2]
+                if roi.size == 0:
+                    continue
+
+                variance = np.var(roi)
+                if variance < 500:
+                    valid_boxes.append(box)
+
+            max_boxes = np.array(valid_boxes)
+        '''
         for box in max_boxes:
             cv2.rectangle(self.big_img,(box[0],box[1]),(box[2],box[3]),(0,0,255),2)
         cv2.imshow("a", self.big_img)
         cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        cv2.destroyAllWindows()'''
         return np.array(max_boxes)
 
     def IoU(self,box1,box2):
@@ -114,8 +146,8 @@ class Deal:
         IoU=intersection/union
         return IoU
 
-    def get_position(self):
-        boxes=self.match()
+    def get_position(self,img,template,type):
+        boxes=self.match(img,template,type)
         if boxes.size == 0 or len(boxes.shape) == 1:
             return np.array([])
         center_x = ((boxes[:, 0] + boxes[:, 2]) / 2).astype(int)
@@ -125,58 +157,121 @@ class Deal:
             return np.array([])
         index = np.lexsort((position[:, 0], position[:, 1]))
         sorted_position = position[index]
-        print(sorted_position)
         return sorted_position
 class State:
-    def __init__(self,positions):
-        self.positions = positions
+    def __init__(self):
+        self.grid=[]
+
     def state_init(self):
-        grid = []
-        avg_x = []
-        avg_y = []
-        current_row = [self.positions[0].tolist()]
-        for position in self.positions[1:]:
-            if abs(position[1] - current_row[0][1]) > 20:
-                grid.append(current_row)
-                current_row = [position.tolist()]
-            else:
-                current_row.append(position.tolist())
-        grid.append(current_row)
 
-        max_row_length = max(len(row) for row in grid)
-        placeholder = [np.nan, np.nan]
-        for row in grid:
-            shortage = max_row_length - len(row)
-            if shortage > 0:
-                row += [placeholder] * shortage
+        hardcoded_x = [28, 85, 142, 199, 256, 313, 370, 427, 484]
 
-        for row in grid:
-            y = [position[1] for position in row if not np.isnan(position[1])]
-            avg_y.append(int(np.mean(y)))
-        col = len(grid[0])
-        for col_index in range(col):
-            x = [grid[row_index][col_index][0] for row_index in range(len(grid)) if
-                 not np.isnan(grid[row_index][col_index][0])]
-            avg_x.append(int(np.mean(x)))
-        new_y = len(avg_x) + 1
-        new_x = len(avg_y) + 1
-        new_matrix = np.zeros((new_x, new_y), dtype=object)
+        hardcoded_y = [28, 85, 142, 199, 256, 313, 370, 427, 484]
+
+        num_rows = len(hardcoded_y)
+        num_cols = len(hardcoded_x)
+
+        new_matrix = np.zeros((num_rows + 1, num_cols + 1), dtype=object)
         new_matrix[1:, 1:] = -1
-        new_matrix[1:, 0] = avg_y
-        new_matrix[0, 1:] = avg_x
-        new_matrix[0, 0] = "Y\\X"
-        return new_matrix
-with mss.mss() as sct:
-    templates=get_path()
-    monitor = {"top": cfg.get('monitor.top'), "left": cfg.get('monitor.left'), "width": cfg.get('monitor.width'), "height": cfg.get('monitor.height')}
-    time.sleep(3)
-    img=np.array(sct.grab(monitor))
-    image_preprocessor=ImagePreprocessor(img,"num3")
-    deal=Deal(image_preprocessor,img)
-    positions=deal.get_position()
+        new_matrix[1:, 0] = hardcoded_y
+        new_matrix[0, 1:] = hardcoded_x
+        new_matrix[0, 0] = 0
 
+        self.grid = new_matrix
+
+
+    def state_refresh(self,safe_block):
+        init_loguru()
+        act=Tool()
+        if safe_block :
+            for safe in safe_block.values():
+                x=safe[0]+cfg.get("monitor.left")
+                y=safe[1]+cfg.get("monitor.top")
+                act.click(x,y)
+                time.sleep(3)
+        #act.click(2045,887)
+        img=act.screenshot()
+        type_to_value = {
+            item['type']:item['value']
+            for item in cfg.get("templatePath.files")
+        }
+        preprocess = ImagePreprocessor(img)
+        deal=Deal(img)
+        x_list=self.grid[0,1:]
+        x_path={x:index for index,x in enumerate(x_list,start=1)}
+        y_list=self.grid[1:,0]
+        y_path={y:index for index,y in enumerate(y_list,start=1)}
+        max_loop=1
+        loop=0
+        processed_cells = set()
+        while self.grid[0,0]==0 and loop<max_loop :
+            '''
+            processed_img, processed_template = preprocess.preprocess(type="lose")
+            lose_position = deal.get_position(processed_img, processed_template, type="lose")
+            if not lose_position:
+                self.grid[0, 0] = 1
+            else:
+                continue'''
+            for type,template in list(templates.items()):
+                if type in ["block", "lose"]:
+                    continue
+                value=type_to_value[type]
+                processed_img, processed_template=preprocess.preprocess(type)
+                positions=deal.get_position(processed_img, processed_template,type)
+                logger.info(type)
+                logger.info(positions)
+                for x, y in positions:
+                    col_idx = self._find_closest_key(x_path, int(x))
+                    row_idx = self._find_closest_key(y_path, int(y) )
+
+                    if col_idx is None or row_idx is None:
+                        logger.info(f"坐标 ({x},{y}) 未匹配到网格，跳过")
+                        continue
+                    cell_key = (row_idx, col_idx)
+                    if cell_key in processed_cells:
+                        continue
+
+                    processed_cells.add(cell_key)
+                    self.grid[row_idx, col_idx] = value
+                    logger.info(f"更新网格：({row_idx},{col_idx}) = {value}")
+
+            loop += 1
+
+        return self.grid
+
+    def _find_closest_key(self, mapping, target, threshold=28):
+        if not mapping:
+            return None
+        closest_key = min(mapping.keys(), key=lambda k: abs(k - target))
+        if abs(closest_key - target) <= threshold:
+            return mapping[closest_key]
+        return None
+class Tool:
+
+    def click(self,x,y):
+        pyautogui.click(x,y)
+    def screenshot(self):
+        with mss.mss() as sct:
+            monitor = {"top": cfg.get('monitor.top'), "left": cfg.get('monitor.left'),
+                       "width": cfg.get('monitor.width'), "height": cfg.get('monitor.height')}
+            time.sleep(3)
+            img = np.array(sct.grab(monitor))
+        return img
+'''
+if __name__ == "__main__":
+    tool=Tool()
+    img = tool.screenshot()
+    state=State()
+    state.state_init(img,type="block")
+    print(state.grid)
+
+    state.state_refresh()
+    print(state.grid)
+'''
+'''
     state=State(positions)
     new_matrix=state.state_init()
     print(new_matrix)
+'''
 
 
